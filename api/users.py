@@ -1,0 +1,41 @@
+from fastapi import APIRouter, Depends, HTTPException, status
+from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy import select
+
+from db.database import get_db
+from models.models import User
+from Schemas.schemas import UserCreate, UserOut
+
+router = APIRouter(prefix="/users", tags=["Users"])
+
+
+@router.post("/", response_model=UserOut, status_code=status.HTTP_201_CREATED)
+async def create_user(payload: UserCreate, db: AsyncSession = Depends(get_db)):
+    result = await db.execute(select(User).where(User.email == payload.email))
+    if result.scalar_one_or_none():
+        raise HTTPException(status_code=400, detail="Email already registered")
+
+    user = User(
+        email=payload.email,
+        username=payload.username,
+        hashed_password=payload.password,   # hash this in real usage
+    )
+    db.add(user)
+    await db.flush()
+    await db.refresh(user)
+    return user
+
+
+@router.get("/{user_id}", response_model=UserOut)
+async def get_user(user_id: int, db: AsyncSession = Depends(get_db)):
+    result = await db.execute(select(User).where(User.id == user_id))
+    user = result.scalar_one_or_none()
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found")
+    return user
+
+
+@router.get("/", response_model=list[UserOut])
+async def list_users(skip: int = 0, limit: int = 20, db: AsyncSession = Depends(get_db)):
+    result = await db.execute(select(User).offset(skip).limit(limit))
+    return result.scalars().all()

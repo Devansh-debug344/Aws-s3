@@ -1,0 +1,24 @@
+from fastapi import WebSocket , APIRouter , WebSocketDisconnect
+
+router = APIRouter(prefix="/chat" , tags="Chat")
+
+connetion_dict = {}
+
+@router.websocket("/{user_id}" , response_model = str)
+async def connected_users(websocket : WebSocket , user_id : int):
+    await websocket.accept()
+    connected_users[user_id] = websocket
+
+    try:
+        while True:
+            data = await websocket.receive_text()  # wait for incoming
+            print(f"user {user_id} says: {data}")
+            
+            # send to everyone else
+            for uid, ws in connected_users.items():
+                if uid != user_id:
+                    await ws.send_text(f"user {user_id}: {data}")
+                    
+    except WebSocketDisconnect:
+        del connected_users[user_id]    # clean up when user leaves
+        print(f"user {user_id} disconnected")
