@@ -15,10 +15,10 @@ async def connected_users(websocket : WebSocket , user_id : int):
             print(f"user {user_id} says: {data}")
             
             # send to everyone else
-            for uid, ws in connected_users.items():
+            for uid, ws in connetion_dict.items():
                 if uid != user_id:
                     await ws.send_text(f"user {user_id}: {data}")
                     
     except WebSocketDisconnect:
-        del connected_users[user_id]    # clean up when user leaves
+        del connetion_dict[user_id]    # clean up when user leaves
         print(f"user {user_id} disconnected")
