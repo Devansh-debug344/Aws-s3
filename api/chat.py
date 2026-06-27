@@ -7,7 +7,7 @@ connetion_dict = {}
 @router.websocket("/{user_id}")
 async def connected_users(websocket : WebSocket , user_id : int):
     await websocket.accept()
-    connected_users[user_id] = websocket
+    connetion_dict[user_id] = websocket
 
     try:
         while True:
