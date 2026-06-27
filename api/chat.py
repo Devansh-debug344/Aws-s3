@@ -15,7 +15,7 @@ async def connected_users(websocket : WebSocket , user_id : int):
         while True:
             await asyncio.sleep(20)  # ping every 20 seconds
             try:
-                await websocket.send_bytes(b"ping")
+                await websocket.send_text(b"ping")
             except:
                 break
 
@@ -23,7 +23,7 @@ async def connected_users(websocket : WebSocket , user_id : int):
 
     try:
         while True:
-            data = await websocket.receive_bytes()  # wait for incoming
+            data = await websocket.receive_text()  # wait for incoming
             if data == b"ping":
                 continue  # ignore ping messages  
             # send to everyone else
