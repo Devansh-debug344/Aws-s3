@@ -1,10 +1,10 @@
 from fastapi import WebSocket , APIRouter , WebSocketDisconnect
 
-router = APIRouter(prefix="/chat" , tags="Chat")
+router = APIRouter(prefix="/chat" , tags=["Chat"])
 
 connetion_dict = {}
 
-@router.websocket("/{user_id}" , response_model = str)
+@router.websocket("/{user_id}")
 async def connected_users(websocket : WebSocket , user_id : int):
     await websocket.accept()
     connected_users[user_id] = websocket
