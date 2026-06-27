@@ -15,7 +15,7 @@ async def connected_users(websocket : WebSocket , user_id : int):
         while True:
             await asyncio.sleep(20)  # ping every 20 seconds
             try:
-                await websocket.send_text("ping")
+                await websocket.send_bytes(b"ping")
             except:
                 break
 
@@ -23,15 +23,20 @@ async def connected_users(websocket : WebSocket , user_id : int):
 
     try:
         while True:
-            data = await websocket.receive_text()  # wait for incoming
-            if data == "ping":
+            data = await websocket.receive_bytes()  # wait for incoming
+            if data == b"ping":
                 continue  # ignore ping messages  
             # send to everyone else
             for uid, ws in connetion_dict.items():
                 if uid != user_id:
-                    await ws.send_text(f"user {user_id}: {data}")
+                    await ws.send_text(f"user {user_id} -> {data}")
                     
     except WebSocketDisconnect:
         del connetion_dict[user_id]
-        await ws.send_text(f"user {user_id} has left the chat")
+
+        for uid, ws in connetion_dict.items():
+                await ws.send_text(f"user -> {user_id} has left the chat")
+           
+           
+           
             # clean up when user leaves
