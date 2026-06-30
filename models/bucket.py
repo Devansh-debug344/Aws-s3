@@ -1,4 +1,4 @@
-from sqlalchemy import Column, Integer, String, ForeignKey, DateTime, func
+from sqlalchemy import Column, Integer, String, ForeignKey, DateTime, func , LargeBinary
 from sqlalchemy.orm import relationship
 from db.database import Base
 
@@ -17,6 +17,7 @@ class Object(Base):
 
     id         = Column(Integer, primary_key=True)
     key        = Column(String, nullable=False)   # filename / path
+    data       = Column(LargeBinary)
     bucket_id  = Column(Integer, ForeignKey("buckets.id"))
     size       = Column(Integer)
     created_at = Column(DateTime, server_default=func.now())   

@@ -1,11 +1,12 @@
-from fastapi import APIRouter, Depends, HTTPException, status
-
+from fastapi import APIRouter, Depends, HTTPException, status , UploadFile , Form , File
+from fastapi.responses import Response
 from sqlalchemy.ext.asyncio import AsyncSession
 from Schemas.schemas import BucketItem , BucketItemOut , Object_Out
 from db.database import get_db
 from models.bucket import Bucket , Object
 from sqlalchemy import select
 import os
+
 router = APIRouter(prefix="/buckets", tags=["Bucket"])
 
 #create a bucket
@@ -23,23 +24,24 @@ async def create_bucket( payload : BucketItem , db : AsyncSession = Depends(get_
      await db.refresh(bucket)
      return bucket
 #post item in bucket
-@router.post("/" , response_model = Object_Out , status_code=status.HTTP_201_CREATED)
-async def add_item_bucket(payload : BucketItem , db : AsyncSession = Depends(get_db)):
+@router.post("/" , response_model = str , status_code=status.HTTP_201_CREATED)
+async def add_item_bucket( owner_id : int = Form() , key : str = Form() , file : UploadFile = File() ,db : AsyncSession = Depends(get_db)):
         
-       owner_id = payload.owner_id
-
        result = await db.execute(select(Bucket).where(Bucket.owner_id == owner_id))
        
        bucket = result.scalar_one_or_none()
 
        if not bucket:
-            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND , detail="Bucket dont exixted")
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND , detail="Bucket dont existed")
        
-       obj = Object(key = payload.text , bucket_id = bucket.id, size = len(payload.text))
+       file_bytes = await file.read()
+
+       obj = Object(key = key , data = file_bytes , bucket_id = bucket.id, size = len(file_bytes))
        db.add(obj)
        await db.flush()
        await db.refresh(obj)
-       return obj
+
+       return f"Item added succesfully"
 
 #get all the elements in bucket               
 
@@ -116,5 +118,27 @@ async def delete_items_in_bucket(owner_id : int , txt : str , db : AsyncSession 
      
      await db.delete(res)
 
-     return f"{res.key} is removed from bucket" 
-     
+     return f"{res.key} is removed from bucket"   
+
+@router.get("/download/{owner_id}/{key:path}")
+async def download_file(owner_id: int, key: str, db: AsyncSession = Depends(get_db)):
+    result = await db.execute(select(Bucket).where(Bucket.owner_id == owner_id))
+    bucket = result.scalar_one_or_none()
+
+    if not bucket:
+        raise HTTPException(status_code=404, detail="Bucket not found")
+
+    query = await db.execute(select(Object).where(
+        Object.bucket_id == bucket.id,
+        Object.key == key
+    ))
+    obj = query.scalar_one_or_none()
+
+    if not obj:
+        raise HTTPException(status_code=404, detail="File not found")
+
+    return Response(
+        content=obj.data,
+        media_type="application/octet-stream",
+        headers={"Content-Disposition": f"attachment; filename={key.split('/')[-1]}"}
+    )
