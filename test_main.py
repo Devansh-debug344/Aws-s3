@@ -2,7 +2,6 @@
 import pytest
 from repositories.bucket_repo import BucketRepo, ObjectRepo
 from models.models import User
-from configtest import db_session
 
 
 @pytest.mark.asyncio

@@ -8,9 +8,6 @@ from fastapi import UploadFile
 class UserBase(BaseModel):
     email: EmailStr
     username: str
-
-
-class UserCreate(UserBase):
     password: str
 
 
@@ -39,23 +36,23 @@ class ItemOut(ItemBase):
     model_config = {"from_attributes": True}
 
 class BucketItem(BaseModel):
-    owner_id : int
+    bucket_name : str
     text : Optional[str] = None
      
 class BucketItemOut(BucketItem):
-     id : int
+     name : str
      owner_id : int
-     created_at: datetime
 
      model_config = {"from_attributes": True}
 
 class Object_Out(BaseModel):
-    id : int 
-    key : Optional[str] = None
-    file : Optional[UploadFile] = None
     bucket_id : int
-    size : int
+    object_name : Optional[str] = None
+    size : Optional[int] = None
+    etag : Optional[str] = None
+    storage_path : Optional[str] = None
     created_at : datetime
+    response_url : Optional[str] = None
 
     model_config = {"from_attributes": True}
 

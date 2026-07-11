@@ -1,3 +1,11 @@
+import os
+from dotenv import load_dotenv
+
+from auth.verify_token import verify_token
+load_dotenv()  
+from botocore.exceptions import ClientError
+import boto3
+from dotenv import load_dotenv
 from fastapi import APIRouter, Depends, HTTPException, status , UploadFile , Form , File
 from fastapi.responses import Response
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -5,136 +13,133 @@ from Schemas.schemas import BucketItem , BucketItemOut , Object_Out
 from db.database import get_db
 from models.bucket import Bucket , Object
 from sqlalchemy import select
-import os
+
 from repositories.bucket_repo import BucketRepo , ObjectRepo
+from tasks import process_upload 
+
+ # Load environment variables from .env file
+
 router = APIRouter(prefix="/buckets", tags=["Bucket"])
 
+
+AWS_ACCESS_KEY_ID = os.getenv("AWS_ACCESS_KEY_ID")
+AWS_SECRET_ACCESS_KEY = os.getenv("AWS_SECRET_ACCESS_KEY")
+AWS_REGION = os.getenv("AWS_REGION", "us-east-1")
+
+
 #create a bucket
-@router.post("/create_bucket" , response_model = BucketItemOut , status_code=status.HTTP_201_CREATED)
-async def create_bucket(payload : BucketItem , db : AsyncSession = Depends(get_db)):
+@router.post("/create_bucket" , response_model = str , status_code=status.HTTP_201_CREATED)
+async def create_bucket(payload : BucketItem , user_id = Depends(verify_token) ,  db : AsyncSession = Depends(get_db)):
      bucket = BucketRepo(db)
-     get_bucket = await bucket.get_bucket_by_owner_id(payload.owner_id)
+     get_bucket = await bucket.get_bucket_by_bucket_name(payload.bucket_name)
 
      if get_bucket:
           raise HTTPException(status_code=status.HTTP_404_NOT_FOUND , detail="Bucket already existed")
      
-     new_bucket = await bucket.create_bucket(payload.owner_id)
+     new_bucket = await bucket.create_bucket(owner_id = user_id , name = payload.bucket_name)
       
-     return new_bucket
-#post item in bucket
-@router.post("/" , response_model = str , status_code=status.HTTP_201_CREATED)
-async def add_item_bucket( owner_id : int = Form() , key : str = Form() , file : UploadFile = File() ,db : AsyncSession = Depends(get_db)):
-        
-       bucket = BucketRepo(db)
+     return f"Bucket created successfully with name {new_bucket.name} and owner_id {new_bucket.owner_id}"
 
-       get_bucket = await bucket.get_bucket_by_owner_id(owner_id)
-       if not get_bucket:
-             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND , detail="Bucket dont existed")
-       obj =  ObjectRepo(db)
+s3_client = boto3.client(
+    "s3",
+    aws_access_key_id=AWS_ACCESS_KEY_ID,
+    aws_secret_access_key=AWS_SECRET_ACCESS_KEY,
+    region_name="us-east-1"
+)
 
-       data = await file.read()
 
-       new_obj = await obj.add_item_bucket(key = key , data = data , bucket_id = get_bucket.id ,  size = len(data))
-     
-       return new_obj
+@router.post("/{bucket_name}", response_model=str, status_code=status.HTTP_201_CREATED)
+async def add_item_bucket(
+    bucket_name: str,
+    object_name: str = Form(),
+    file: UploadFile = File(), 
+    user_id = Depends(verify_token),
+    db: AsyncSession = Depends(get_db)
+):
+    bucket = BucketRepo(db)
+    get_bucket = await bucket.get_bucket_by_bucket_name(bucket_name)
+
+    if get_bucket and get_bucket.owner_id != user_id:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="You do not have permission to add items to this bucket")
+
+    if not get_bucket:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Bucket doesn't exist")
+
+    obj = ObjectRepo(db)
+
+    # Read file once, store it
+    file_content = await file.read()
+    file_size = len(file_content)
+
+    #create bucket
+    try:
+        s3_client.create_bucket(Bucket=get_bucket.name)
+    except ClientError as e:
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=f"Error creating bucket try unique name : {e}")
+    try:
+    # Upload to S3
+       s3_client.put_object(
+        Bucket=get_bucket.name,
+        Key=object_name,
+        Body=file_content
+       )
+    except ClientError as e:
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=f"Error uploading file: {e}")
+    # Save to DB
+    new_obj = await obj.add_item_bucket(
+        bucket_id=get_bucket.id,
+        object_name=object_name,
+        size=file_size,
+        etag="",
+        storage_path=""
+    )
+
+    # Queue task
+    process_upload.delay(key=object_name, size=file_size)
+
+    return f"Item added successfully to bucket {get_bucket.name} with object name {object_name}"
 
 #get all the elements in bucket               
 
-@router.get("/{owner_id}" , response_model=list[Object_Out] , status_code=status.HTTP_200_OK)
-# or just remove it, 200 is the default for GET)
-async def get_bucket_items(owner_id : int , db : AsyncSession = Depends(get_db)):
+@router.get("/{bucket_name}/{object_name}" , response_model= dict, status_code=status.HTTP_200_OK)
+async def download_bucket_items(bucket_name : str, object_name : str, user_id = Depends(verify_token) , db : AsyncSession = Depends(get_db)):
 
      bucket_repo = BucketRepo(db)
 
-     bucket = await bucket_repo.get_bucket_by_owner_id(owner_id=owner_id)
+     bucket = await bucket_repo.get_bucket_by_bucket_name(bucket_name=bucket_name)
  
      
      if not bucket:
           raise HTTPException(status_code=status.HTTP_404_NOT_FOUND , detail="Bucket dont exixted")
+     
+     if bucket.owner_id != user_id:
+          raise HTTPException(status_code=status.HTTP_403_FORBIDDEN , detail="You dont have permission to access this bucket")
 
      bucket_id = bucket.id
  
      obj_repo = ObjectRepo(db)
 
-     obj = obj_repo.get_object_by_bucket_id(bucket_id=bucket_id)
+     obj = await obj_repo.get_object_by_bucket_id(bucket_id=bucket_id)
      
      if not obj:
           raise HTTPException(status_code=status.HTTP_404_NOT_FOUND , detail="No object in bucket")
-     
-     return obj
-         
-
-@router.get("/{owner_id}/{txt:path}" , status_code=status.HTTP_200_OK , response_model=list[str])
-async def get_files_under_directory(owner_id : int , txt : str , db : AsyncSession = Depends(get_db)):
-    
-          
-     result = await db.execute(select(Bucket).where(Bucket.owner_id == owner_id))
- 
-     bucket = result.scalar_one_or_none()
-
-     if not bucket:
-            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND , detail="Bucket dont exixted")
-     
-     bucket_id = bucket.id
-
-     query = await db.execute(select(Object).where(Object.bucket_id == bucket_id , Object.key.ilike(f"%{txt}%")))
-
-     res = query.scalars().all()
-
-     if not res:
-          raise HTTPException(status_code=status.HTTP_404_NOT_FOUND , detail="Bucket is empty")
-     ls = []
-     for i in res:
-
-       file_path = os.path.join("/home/devansh/" , f"{i.key}")
-       if not os.path.exists(file_path):
-              raise HTTPException(status_code=404, detail=f"{i.key} not found on disk")
-       with open(file_path, "r", encoding="utf-8") as file:
-          content = file.read()
-          ls.append(content)
-
-     return ls     
-
-
-@router.delete("/{owner_id}/{txt:path}" , status_code=status.HTTP_200_OK , response_model=str)
-async def delete_items_in_bucket(owner_id : int , txt : str , db : AsyncSession = Depends(get_db)):
-
-     bucket_repo = BucketRepo(db)
-
-     bucket = await bucket_repo.get_bucket_by_owner_id(owner_id=owner_id)
-
-     if not bucket:
-            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND , detail="Bucket dont existed")
+     try:
+        response_url = s3_client.generate_presigned_url(
+        'get_object',
+        Params={'Bucket': bucket_name, 'Key': object_name},
+        ExpiresIn=3600  # URL expires in 1 hour
+        )
+     except ClientError as e:
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=f"Error generating pre-signed URL: {e}")
      
      
-     obj_repo = ObjectRepo(db)
-     
-     res = await obj_repo.delete_item_from_bucket(bucket, txt)
-   
-     if not res:
-          raise HTTPException(status_code=status.HTTP_404_NOT_FOUND , detail="File does not exist")
-
-     return res 
-
-@router.get("/download/{owner_id}/{key:path}")
-async def download_file(owner_id: int, key: str, db: AsyncSession = Depends(get_db)):
-    result = await db.execute(select(Bucket).where(Bucket.owner_id == owner_id))
-    bucket = result.scalar_one_or_none()
-
-    if not bucket:
-        raise HTTPException(status_code=404, detail="Bucket not found")
-
-    query = await db.execute(select(Object).where(
-        Object.bucket_id == bucket.id,
-        Object.key == key
-    ))
-    obj = query.scalar_one_or_none()
-
-    if not obj:
-        raise HTTPException(status_code=404, detail="File not found")
-
-    return Response(
-        content=obj.data,
-        media_type="application/octet-stream",
-        headers={"Content-Disposition": f"attachment; filename={key.split('/')[-1]}"}
-    )
+     return {
+        "object_name": object_name,
+        "size": obj[0].size if obj else None,
+        "etag": obj[0].etag if obj else None,
+        "storage_path": obj[0].storage_path if obj else None,
+        "created_at": obj[0].created_at if obj else None,
+        "response_url": response_url
+        }
+       
+        

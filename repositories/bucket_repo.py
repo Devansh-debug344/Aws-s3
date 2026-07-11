@@ -14,10 +14,17 @@ class BucketRepo:
         bucket = res.scalar_one_or_none()
 
         return bucket
+    async def get_bucket_by_bucket_name(self , bucket_name : str ) -> Bucket | None:
 
-    async def create_bucket(self , owner_id : int ) -> Bucket:
+        res = await self.session.execute(select(Bucket).where(bucket_name == Bucket.name))
 
-     bucket = Bucket(owner_id = owner_id)
+        bucket = res.scalar_one_or_none()
+
+        return bucket
+    
+    async def create_bucket(self , owner_id : int , name : str ) -> Bucket:
+
+     bucket = Bucket(owner_id = owner_id , name = name)
      self.session.add(bucket)
      await self.session.flush()
      await self.session.refresh(bucket)
@@ -36,9 +43,9 @@ class ObjectRepo:
 
         return obj
 
-    async def add_item_bucket( self  , key: str, data: bytes , bucket_id : int ,  size : int) -> str:
+    async def add_item_bucket( self  , bucket_id: int , object_name: str, size: int , etag: str , storage_path : str ) -> str:
         
-       obj = Object(key=key , data=data , bucket_id  = bucket_id , size = size)
+       obj = Object(bucket_id  = bucket_id , object_name = object_name, size = size, etag = etag, storage_path = storage_path)
        self.session.add(obj)
        await self.session.flush()
        await self.session.refresh(obj)
